@@ -2,6 +2,13 @@ name: Stock momentum report
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "config.json"
+      - "requirements.txt"
+      - ".github/workflows/stock-report.yml"
   schedule:
     # GitHub cron is UTC. These are 08:00, 14:00, 16:30 KST on Korean weekdays.
     - cron: "0 23 * * 0-4"
@@ -36,4 +43,3 @@ jobs:
           git add docs reports LATEST.md
           git diff --cached --quiet || git commit -m "report: automatic market update"
           git push
-
