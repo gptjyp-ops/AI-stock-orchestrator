@@ -11,6 +11,7 @@ on:
       - ".github/workflows/stock-report.yml"
   schedule:
     # GitHub cron is UTC. Run hourly from 08:00 through 17:00 KST on Korean weekdays.
+    - cron: "55 22 * * 0-4"
     - cron: "0 23 * * 0-4"
     - cron: "0 0-8 * * 1-5"
 
