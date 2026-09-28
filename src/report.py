@@ -72,6 +72,7 @@ def metrics(frame: pd.DataFrame) -> dict:
     volume_signal = vol_ratio >= 1.5 and ret1 > 0
     return {
         "price": latest, "ret1": ret1, "ret5": ret5, "ma20": ma20, "ma60": ma60,
+        "asof": str(close.index[-1].date()),
         "vol_ratio": vol_ratio, "pullback": pullback, "volume_signal": volume_signal
     }
 
@@ -252,7 +253,7 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
     nav = (
         "<nav class='nav'>"
         "<a href='index.html'>홈</a>"
-        "<a href='briefing.html'>장전 브리핑</a>"
+        "<a href='briefing.html'>오늘 브리핑</a>"
         "<a href='market.html'>시장지수</a>"
         "<a href='watchlist.html'>관심종목</a>"
         "<a href='stocks.html'>전체 종목</a>"
@@ -280,7 +281,7 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
 
     quick_cards = (
         "<section class='grid'>"
-        "<a class='card linkcard' href='briefing.html'><h3>🌅 장전 브리핑</h3><p>매일 아침 시장 방향, 업종 우선순위, 핵심 전략을 한 곳에서 확인.</p><span>오늘 장전판 →</span></a>"
+        "<a class='card linkcard' href='briefing.html'><h3>🌅 오늘 브리핑</h3><p>첫 자동 실행의 지수·업종·관심종목을 한 곳에서 확인.</p><span>오늘 브리핑 →</span></a>"
         "<a class='card linkcard' href='market.html'><h3>🌐 시장지수</h3><p>KOSPI·KOSDAQ·NASDAQ 흐름만 빠르게 분리 확인.</p><span>지수 보기 →</span></a>"
         "<a class='card linkcard' href='watchlist.html'><h3>👀 관심종목</h3><p>추적 종목의 가격·1일·5일 수익률·거래량 신호.</p><span>관심종목 →</span></a>"
         "<a class='card linkcard' href='sectors.html'><h3>⚡ 업종 모멘텀</h3><p>반도체·방산·2차전지·로봇 등 업종 순위와 상위 3종목.</p><span>업종 보기 →</span></a>"
@@ -379,6 +380,46 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
         "<p>거래량↑: 당일 거래량이 20일 평균의 1.5배 이상이며 당일 상승</p></section>"
     )
 
+    # Build the daily briefing only from fetched prices and disclosures. Never reuse a
+    # hand-written strategy or imply that delayed daily Yahoo prices are live quotes.
+    timing = "장전 스냅샷" if now.hour < 9 else "첫 실행 스냅샷 · 장전 이후 생성"
+    market_brief = "".join(
+        f"<tr><td>{html.escape(name)}</td><td>{stat['price']:,.2f}</td>"
+        f"<td class='{('up' if stat['ret1'] >= 0 else 'down')}'>{pct(stat['ret1'])}</td>"
+        f"<td>{html.escape(stat['asof'])}</td></tr>"
+        for name, ticker in MARKET_INDEXES.items() if (stat := stats.get(ticker))
+    ) or "<tr><td colspan='4'>지수 데이터가 없습니다.</td></tr>"
+    brief_sectors = "".join(
+        f"<tr><td>{html.escape(sector)}</td><td>{pct(score)}</td><td>"
+        + html.escape(", ".join(f"{names.get(t, t)} {pct(st['ret5'])}" for t, st in ranked[:3]))
+        + "</td></tr>" for sector, score, ranked in strong_sectors
+    ) or "<tr><td colspan='3'>업종 데이터가 없습니다.</td></tr>"
+    brief_stocks = "".join(
+        f"<tr><td>{html.escape(name)}</td><td>{stat['price']:,.0f}</td>"
+        f"<td>{pct(stat['ret1'])}</td><td>{html.escape(stat['asof'])}</td>"
+        f"<td>{'눌림목' if stat['pullback'] else '거래량↑' if stat['volume_signal'] else '관찰'}</td></tr>"
+        for _, name, stat in rows
+    ) or "<tr><td colspan='5'>종목 데이터가 없습니다.</td></tr>"
+    brief_disclosures = "".join(
+        f"<li><a href='{html.escape(row['url'], quote=True)}'>{html.escape(row['name'])} · "
+        f"{html.escape(row['title'])}</a> ({html.escape(row['date'])})</li>"
+        for row in disclosures[:5]
+    ) or "<li>확인된 신규 공시가 없습니다. DART 키 미연결이나 조회 실패일 수도 있습니다.</li>"
+    briefing_body = (
+        f"<section class='hero'><div class='eyebrow'>DAILY BRIEF · {now:%Y-%m-%d %H:%M} KST</div>"
+        f"<h2>{now:%m월 %d일} 시장 브리핑</h2><p class='muted'>{timing}</p>"
+        "<div class='hubnote'>각 시세의 기준일을 확인하세요. 무료 일봉 자료는 지연될 수 있으며, "
+        "이 페이지는 매일 첫 자동 실행에 생성된 뒤 같은 날에는 고정됩니다.</div></section>"
+        "<div class='section-title'><h2>시장지수</h2></div><div class='table'><table>"
+        f"<thead><tr><th>지수</th><th>값</th><th>1일</th><th>시세 기준일</th></tr></thead><tbody>{market_brief}</tbody></table></div>"
+        "<div class='section-title'><h2>강세 업종 · 최근 5거래일</h2></div><div class='table'><table>"
+        f"<thead><tr><th>업종</th><th>평균</th><th>상위 종목</th></tr></thead><tbody>{brief_sectors}</tbody></table></div>"
+        "<div class='section-title'><h2>보유·관심종목</h2></div><div class='table'><table>"
+        f"<thead><tr><th>종목</th><th>가격</th><th>1일</th><th>시세 기준일</th><th>정량 신호</th></tr></thead><tbody>{brief_stocks}</tbody></table></div>"
+        f"<section class='panel'><h3>확인된 긍정 공시</h3><ul>{brief_disclosures}</ul></section>"
+        "<section class='panel'><h3>데이터 범위</h3><p>시세와 정량 신호만 자동 생성합니다. "
+        "뉴스 해설과 매수·매도 가격은 자동 작성되지 않습니다.</p></section>"
+    )
     pages = {
         "market.html": shell("시장지수", market_body),
         "portfolio.html": shell("보유종목", portfolio_body),
@@ -388,6 +429,7 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
         "disclosures.html": shell("긍정공시", disclosure_body),
         "signals.html": shell("매매신호", signal_body),
     }
+    pages["briefing.html"] = shell("오늘 브리핑", briefing_body)
     return "\n".join(md), shell("대시보드", dashboard), pages
 
 
@@ -407,7 +449,12 @@ def main() -> None:
 
     (docs / "index.html").write_text(page, encoding="utf-8")
     for filename, content in detail_pages.items():
-        (docs / filename).write_text(content, encoding="utf-8")
+        target = docs / filename
+        if filename == "briefing.html" and target.exists():
+            # Preserve the day's first snapshot through later hourly runs.
+            if f"DAILY BRIEF · {now:%Y-%m-%d} " in target.read_text(encoding="utf-8"):
+                continue
+        target.write_text(content, encoding="utf-8")
 
     # 하루에 보고서 파일 하나만 유지하고, 장중 실행은 같은 날짜 파일을 갱신한다.
     (reports / f"{now:%Y-%m-%d}.md").write_text(markdown, encoding="utf-8")
