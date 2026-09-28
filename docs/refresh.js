@@ -4,7 +4,7 @@
   if (!button) return;
   button.addEventListener('click', async () => {
     const filename = location.pathname.split('/').pop() || 'index.html';
-    if (!/^(index|market|watchlist|stocks|sectors|disclosures|signals|portfolio)\.html$/.test(filename)) return;
+    if (!/^(index|market|watchlist|stocks|sectors|disclosures|signals|portfolio|briefing)\.html$/.test(filename)) return;
     const oldText = button.textContent;
     button.disabled = true;
     button.textContent = '확인 중…';
