@@ -59,57 +59,20 @@ def fetch_prices(tickers: list[str]) -> dict[str, pd.DataFrame]:
 
 def metrics(frame: pd.DataFrame) -> dict:
     close = frame["Close"].astype(float)
-    open_series = frame["Open"].astype(float)
-    high_series = frame["High"].astype(float)
-    low_series = frame["Low"].astype(float)
     volume = frame["Volume"].astype(float)
-
     latest = float(close.iloc[-1])
     prev = float(close.iloc[-2]) if len(close) > 1 else latest
-    open_price = float(open_series.iloc[-1])
-    high_price = float(high_series.iloc[-1])
-    low_price = float(low_series.iloc[-1])
-
-    ma5 = float(close.tail(5).mean())
     ma20 = float(close.tail(20).mean())
     ma60 = float(close.tail(60).mean())
-    support20 = float(close.tail(20).min())
     avg_vol20 = float(volume.tail(20).mean()) or 1
     vol_ratio = float(volume.iloc[-1]) / avg_vol20
     ret1 = (latest / prev - 1) * 100 if prev else 0
     ret5 = (latest / float(close.iloc[-6]) - 1) * 100 if len(close) > 5 else ret1
-
-    pullback = ma20 * 0.985 <= latest <= ma20 * 1.035 and latest >= ma60 * 0.99 and ret1 > -4
+    pullback = ma20 <= latest <= ma20 * 1.035 and latest >= ma60 and ret1 > -2
     volume_signal = vol_ratio >= 1.5 and ret1 > 0
-
-    if ma20 >= ma60:
-        buy_low = max(ma60, ma20 * 0.985)
-        buy_high = ma20 * 1.02
-    else:
-        buy_low = ma60 * 0.985
-        buy_high = ma60 * 1.015
-
-    invalid_price = min(ma60, support20) * 0.97
-    if latest < ma60 * 0.97:
-        buy_state = "지지이탈"
-        buy_class = "broken"
-    elif latest > ma20 * 1.08 or ret5 >= 12 or (vol_ratio >= 1.8 and ret1 >= 5):
-        buy_state = "추격금지"
-        buy_class = "chase"
-    elif buy_low <= latest <= buy_high and latest >= ma60 * 0.99:
-        buy_state = "매수관찰"
-        buy_class = "buy"
-    else:
-        buy_state = "대기"
-        buy_class = "wait"
-
     return {
-        "price": latest, "open": open_price, "high": high_price, "low": low_price,
-        "ret1": ret1, "ret5": ret5, "ma5": ma5, "ma20": ma20, "ma60": ma60,
-        "buy_low": buy_low, "buy_high": buy_high, "invalid_price": invalid_price,
-        "buy_state": buy_state, "buy_class": buy_class,
+        "price": latest, "ret1": ret1, "ret5": ret5, "ma20": ma20, "ma60": ma60,
         "asof": str(close.index[-1].date()),
-        "closes": [float(v) for v in close.tail(30).tolist()],
         "vol_ratio": vol_ratio, "pullback": pullback, "volume_signal": volume_signal
     }
 
@@ -199,53 +162,6 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
     watch_rows = [row_html(label, name, stat) for label, name, stat in rows if label == "관심"]
     portfolio_rows = [row_html(label, name, stat) for label, name, stat in rows if label == "보유"]
 
-
-    def sparkline_svg(values: list[float]) -> str:
-        if not values:
-            return "<div class='chart-empty'>차트 데이터 없음</div>"
-        width, height, pad = 420, 128, 8
-        lo, hi = min(values), max(values)
-        span = hi - lo or 1
-        points = []
-        for idx, value in enumerate(values):
-            x = pad + idx * (width - pad * 2) / max(len(values) - 1, 1)
-            y = height - pad - (value - lo) * (height - pad * 2) / span
-            points.append(f"{x:.1f},{y:.1f}")
-        tone = "chart-up" if values[-1] >= values[0] else "chart-down"
-        return (
-            f"<svg class='spark {tone}' viewBox='0 0 {width} {height}' role='img' aria-label='최근 30거래일 종가 차트'>"
-            f"<polyline points='{' '.join(points)}' fill='none' vector-effect='non-scaling-stroke'/>"
-            "</svg>"
-        )
-
-    watch_detail_cards = []
-    for item in config["watchlist"]:
-        stat = stats.get(item["ticker"])
-        if not stat:
-            continue
-        tone = "up" if stat["ret1"] >= 0 else "down"
-        watch_detail_cards.append(
-            "<article class='stockdetail'>"
-            f"<div class='stocktop'><div><span class='muted'>{html.escape(item['ticker'])}</span>"
-            f"<h3>{html.escape(item['name'])}</h3><p>{html.escape(item.get('reason', '관심종목'))}</p></div>"
-            f"<div class='quote'><b>{stat['price']:,.0f}</b><span class='{tone}'>{pct(stat['ret1'])}</span>"
-            f"<span class='buybadge {stat['buy_class']}'>{stat['buy_state']}</span></div></div>"
-            f"{sparkline_svg(stat['closes'])}"
-            "<div class='ohlc'>"
-            f"<div><small>시가</small><b>{stat['open']:,.0f}</b></div>"
-            f"<div><small>고가</small><b>{stat['high']:,.0f}</b></div>"
-            f"<div><small>저가</small><b>{stat['low']:,.0f}</b></div>"
-            f"<div><small>종가</small><b>{stat['price']:,.0f}</b></div>"
-            f"<div><small>거래량</small><b>{stat['vol_ratio']:.2f}배</b></div>"
-            "</div>"
-            "<div class='levels'>"
-            f"<p><span>매수 관찰 구간</span><b>{stat['buy_low']:,.0f} ~ {stat['buy_high']:,.0f}</b></p>"
-            f"<p><span>무효선</span><b>{stat['invalid_price']:,.0f} 종가 이탈</b></p>"
-            f"<p><span>이평선</span><b>5일 {stat['ma5']:,.0f} · 20일 {stat['ma20']:,.0f} · 60일 {stat['ma60']:,.0f}</b></p>"
-            f"<p><span>기준일</span><b>{html.escape(stat['asof'])}</b></p>"
-            "</div></article>"
-        )
-
     md = [
         "# AI 주식 모멘텀 보고서", "",
         f"> 생성: {now:%Y-%m-%d %H:%M} KST · 당일 자동 갱신본", "",
@@ -332,7 +248,7 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
             market_cards.append(f"<a class='metric' href='market.html'><small>{market_name}</small><b>데이터 대기</b></a>")
             market_rows.append(f"<tr><td>{market_name}</td><td colspan='3'>데이터 대기</td></tr>")
 
-    stylesheet = ":root{--bg:#060b14;--panel:#0d1624;--line:#1d2a3d;--text:#edf4ff;--muted:#8191a8;--red:#ff5573;--blue:#4c9fff;--mint:#38d9b3}*{box-sizing:border-box}body{font-family:Inter,Pretendard,system-ui,sans-serif;margin:0;background:radial-gradient(circle at 75% -10%,#132c52 0,transparent 34%),var(--bg);color:var(--text)}.wrap{max-width:1180px;margin:auto;padding:28px 22px 60px}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.brand{display:flex;align-items:center;gap:12px}.logo{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--blue),#765cff);font-weight:900}.brand h1{font-size:19px;margin:0}.muted{color:var(--muted)}.head-actions{display:flex;align-items:center;gap:8px}.live{font-size:12px;color:var(--mint);background:#0c2b27;border:1px solid #175247;padding:8px 11px;border-radius:99px}.refresh{border:1px solid #2f6fb8;background:#102846;color:#dcecff;border-radius:10px;padding:8px 11px;font:700 12px inherit;cursor:pointer}.refresh:hover{background:#17375f;border-color:var(--blue)}.refresh:disabled{opacity:.6;cursor:wait}.actionlink{color:#9dc9ff;font-size:12px}.nav{display:flex;gap:7px;overflow:auto;margin:0 0 28px;padding-bottom:5px}.nav a{white-space:nowrap;text-decoration:none;color:#9eafc5;background:#0b1523;border:1px solid var(--line);padding:9px 12px;border-radius:10px;font-size:12px}.nav a:hover{color:white;border-color:var(--blue)}.hero{padding:27px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(145deg,rgba(17,29,47,.96),rgba(10,18,30,.96));margin-bottom:26px}.eyebrow{color:var(--blue);font-size:12px;font-weight:800;letter-spacing:.12em}.hero h2{font-size:30px;margin:9px 0}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:22px}.metric{display:block;text-decoration:none;color:var(--text);background:#0a1321;border:1px solid var(--line);border-radius:14px;padding:15px}.metric:hover,.linkcard:hover{border-color:var(--blue);transform:translateY(-2px)}.metric small{display:block;color:var(--muted);margin-bottom:7px}.metric b{font-size:20px}.section-title{display:flex;justify-content:space-between;align-items:end;margin:28px 2px 12px}.section-title h2{font-size:17px;margin:0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card,table,.panel{background:linear-gradient(145deg,#101d2f,#0b1422);border:1px solid var(--line);border-radius:16px}.card,.panel{padding:18px}.linkcard{display:block;text-decoration:none;color:var(--text);transition:.2s}.linkcard span{font-size:11px;color:var(--blue)}.card h3{font-size:14px;margin:0 0 10px}.card b,.up{color:var(--red)}.card b.down,.down{color:var(--blue)}.card p{font-size:12px;color:#9cacbf;line-height:1.6}.tag{display:inline-block;padding:4px 8px;border-radius:99px;background:#102846;color:#78b7ff;font-size:11px;font-weight:800}.table{border-radius:16px;overflow:hidden;border:1px solid var(--line);margin-bottom:14px}table{width:100%;border-collapse:collapse;background:#0d1726}th{font-size:11px;color:var(--muted);background:#101d2f}th,td{padding:13px;text-align:right;border-bottom:1px solid var(--line)}td{font-size:13px}tr:last-child td{border:0}th:nth-child(-n+2),td:nth-child(-n+2),th:last-child,td:last-child{text-align:left}a{color:#75baff}.panel{margin-bottom:12px}.panel li{margin:8px 0;line-height:1.5}.pagehead{margin:18px 0 24px}.pagehead h2{font-size:28px;margin:5px 0}.hubnote{padding:13px 15px;border:1px solid #28486e;background:#0c1b2e;border-radius:12px;color:#aac5e8;font-size:13px;line-height:1.6}.stockgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:22px}.stockdetail{background:linear-gradient(145deg,#101d2f,#0b1422);border:1px solid var(--line);border-radius:18px;padding:18px}.stocktop{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.stocktop h3{font-size:19px;margin:4px 0}.stocktop p{font-size:12px;color:#91a3ba;margin:0}.quote{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:5px}.quote>b{font-size:25px}.buybadge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:900}.buybadge.buy{background:#123a31;color:#55e1bc}.buybadge.wait{background:#3a3112;color:#ffd86a}.buybadge.chase{background:#451725;color:#ff7990}.buybadge.broken{background:#102846;color:#72b7ff}.spark{width:100%;height:128px;margin:15px 0 10px;border-radius:12px;background:#08111e;border:1px solid #17263b}.spark polyline{stroke-width:2.5}.spark.chart-up polyline{stroke:#ff6b83}.spark.chart-down polyline{stroke:#58a6ff}.ohlc{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}.ohlc div{padding:10px;background:#0a1321;border:1px solid var(--line);border-radius:10px}.ohlc small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.ohlc b{font-size:12px}.levels{margin-top:11px}.levels p{display:flex;justify-content:space-between;gap:12px;margin:0;padding:9px 2px;border-bottom:1px solid #17263b;font-size:12px}.levels p:last-child{border-bottom:0}.levels span{color:var(--muted)}.chart-empty{height:128px;display:grid;place-items:center;color:var(--muted)}footer{text-align:center;color:#66768d;font-size:11px;margin-top:32px}@media(max-width:700px){.stockgrid{grid-template-columns:1fr}.ohlc{grid-template-columns:repeat(2,1fr)}.head-actions{align-items:flex-end;flex-direction:column}.summary{grid-template-columns:1fr}.table{overflow:auto}table{min-width:760px}.hero h2,.pagehead h2{font-size:24px}.top{align-items:flex-start}.live{font-size:10px}}"
+    stylesheet = ":root{--bg:#060b14;--panel:#0d1624;--line:#1d2a3d;--text:#edf4ff;--muted:#8191a8;--red:#ff5573;--blue:#4c9fff;--mint:#38d9b3}*{box-sizing:border-box}body{font-family:Inter,Pretendard,system-ui,sans-serif;margin:0;background:radial-gradient(circle at 75% -10%,#132c52 0,transparent 34%),var(--bg);color:var(--text)}.wrap{max-width:1180px;margin:auto;padding:28px 22px 60px}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.brand{display:flex;align-items:center;gap:12px}.logo{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--blue),#765cff);font-weight:900}.brand h1{font-size:19px;margin:0}.muted{color:var(--muted)}.head-actions{display:flex;align-items:center;gap:8px}.live{font-size:12px;color:var(--mint);background:#0c2b27;border:1px solid #175247;padding:8px 11px;border-radius:99px}.refresh{border:1px solid #2f6fb8;background:#102846;color:#dcecff;border-radius:10px;padding:8px 11px;font:700 12px inherit;cursor:pointer}.refresh:hover{background:#17375f;border-color:var(--blue)}.refresh:disabled{opacity:.6;cursor:wait}.actionlink{color:#9dc9ff;font-size:12px}.nav{display:flex;gap:7px;overflow:auto;margin:0 0 28px;padding-bottom:5px}.nav a{white-space:nowrap;text-decoration:none;color:#9eafc5;background:#0b1523;border:1px solid var(--line);padding:9px 12px;border-radius:10px;font-size:12px}.nav a:hover{color:white;border-color:var(--blue)}.hero{padding:27px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(145deg,rgba(17,29,47,.96),rgba(10,18,30,.96));margin-bottom:26px}.eyebrow{color:var(--blue);font-size:12px;font-weight:800;letter-spacing:.12em}.hero h2{font-size:30px;margin:9px 0}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:22px}.metric{display:block;text-decoration:none;color:var(--text);background:#0a1321;border:1px solid var(--line);border-radius:14px;padding:15px}.metric:hover,.linkcard:hover{border-color:var(--blue);transform:translateY(-2px)}.metric small{display:block;color:var(--muted);margin-bottom:7px}.metric b{font-size:20px}.section-title{display:flex;justify-content:space-between;align-items:end;margin:28px 2px 12px}.section-title h2{font-size:17px;margin:0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card,table,.panel{background:linear-gradient(145deg,#101d2f,#0b1422);border:1px solid var(--line);border-radius:16px}.card,.panel{padding:18px}.linkcard{display:block;text-decoration:none;color:var(--text);transition:.2s}.linkcard span{font-size:11px;color:var(--blue)}.card h3{font-size:14px;margin:0 0 10px}.card b,.up{color:var(--red)}.card b.down,.down{color:var(--blue)}.card p{font-size:12px;color:#9cacbf;line-height:1.6}.tag{display:inline-block;padding:4px 8px;border-radius:99px;background:#102846;color:#78b7ff;font-size:11px;font-weight:800}.table{border-radius:16px;overflow:hidden;border:1px solid var(--line);margin-bottom:14px}table{width:100%;border-collapse:collapse;background:#0d1726}th{font-size:11px;color:var(--muted);background:#101d2f}th,td{padding:13px;text-align:right;border-bottom:1px solid var(--line)}td{font-size:13px}tr:last-child td{border:0}th:nth-child(-n+2),td:nth-child(-n+2),th:last-child,td:last-child{text-align:left}a{color:#75baff}.panel{margin-bottom:12px}.panel li{margin:8px 0;line-height:1.5}.pagehead{margin:18px 0 24px}.pagehead h2{font-size:28px;margin:5px 0}.hubnote{padding:13px 15px;border:1px solid #28486e;background:#0c1b2e;border-radius:12px;color:#aac5e8;font-size:13px;line-height:1.6}footer{text-align:center;color:#66768d;font-size:11px;margin-top:32px}@media(max-width:700px){.head-actions{align-items:flex-end;flex-direction:column}.summary{grid-template-columns:1fr}.table{overflow:auto}table{min-width:760px}.hero h2,.pagehead h2{font-size:24px}.top{align-items:flex-start}.live{font-size:10px}}"
 
     nav = (
         "<nav class='nav'>"
@@ -396,18 +312,10 @@ def make_report(config: dict, prices: dict[str, pd.DataFrame], now: datetime) ->
         f"<div class='table'><table>{table_head}<tbody>{''.join(html_rows) or '<tr><td colspan=\"7\">등록된 종목이 없습니다.</td></tr>'}</tbody></table></div>"
     )
     watchlist_body = (
-        "<div class='pagehead'><div class='eyebrow'>WATCHLIST · STOCK MINER</div><h2>관심종목</h2>"
-        "<p class='muted'>최근 30거래일 종가 차트와 시가·고가·저가·종가, 이평선, 매수 관찰 구간을 함께 봅니다. "
-        "가격은 자동 수집된 일봉 기준이며 실시간 체결가는 아닙니다.</p></div>"
-        f"<section class='stockgrid'>{''.join(watch_detail_cards) or '<div class="panel">관심종목 데이터가 없습니다.</div>'}</section>"
-        "<div class='section-title'><h2>빠른 비교표</h2></div>"
-        f"<div class='table'><table>{table_head}<tbody>{''.join(watch_rows) or '<tr><td colspan="7">관심종목이 없습니다.</td></tr>'}</tbody></table></div>"
-        "<section class='hubnote'><b>판정 기준</b><br>"
-        "매수관찰 = 20·60일선 부근의 눌림 구간이며 추세 훼손이 크지 않은 경우 · "
-        "대기 = 매수 관찰 구간과 거리가 있는 경우 · 추격금지 = 단기 급등/거래량 과열 · "
-        "지지이탈 = 60일선 아래로 추세가 약해진 경우. 자동 정량 참고값이며 매수 추천은 아닙니다.</section>"
+        "<div class='pagehead'><div class='eyebrow'>WATCHLIST</div><h2>관심종목</h2>"
+        "<p class='muted'>관심종목만 분리해 가격·수익률·거래량·신호를 확인합니다.</p></div>"
+        f"<div class='table'><table>{table_head}<tbody>{''.join(watch_rows) or '<tr><td colspan=\"7\">관심종목이 없습니다.</td></tr>'}</tbody></table></div>"
     )
-
     portfolio_body = (
         "<div class='pagehead'><div class='eyebrow'>PORTFOLIO</div><h2>보유종목</h2>"
         "<p class='muted'>config.json의 portfolio에 등록된 종목만 표시합니다.</p></div>"
